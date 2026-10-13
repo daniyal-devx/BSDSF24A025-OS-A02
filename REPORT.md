@@ -103,13 +103,35 @@ size can be detected.
 printing logic versus the "across" (horizontal) printing logic. Which one
 requires more pre-calculation and why?**
 
-(answer added in Feature-4)
+The vertical ("down then across") logic needs far more pre-calculation. Before
+a single character can be printed it must know the longest filename, the column
+width, the number of columns, and — crucially — the number of rows, because the
+number of rows is what defines the *stride* used to address the array
+(`index = col * nrows + row`). The row count depends on the item count, the
+column count and the terminal width, and it is needed even to decide which
+items belong to the first printed line. Each printed line is then rebuilt from
+several non-contiguous array positions.
+
+The horizontal ("across") logic needs only the column width and the terminal
+width, both of which are constant for the whole run. It simply walks the array
+in order and keeps a running `pos` variable with the current horizontal
+position, wrapping when `pos + colwidth > width`. No row count, no index
+arithmetic and no second pass are needed — which is exactly why, in the real
+`ls`, `-x` is the simpler mode.
 
 **Q2. Describe the strategy you used in your code to manage the different display
 modes (-l, -x, and default). How did your program decide which function to call
 for printing?**
 
-(answer added in Feature-4)
+The state is kept in two independent `int` flags in `main()` — `long_flag` and
+`horizontal_flag` — each set by its own `case` in the `getopt()` loop (`"lx"`).
+These flags are then passed down to `do_ls()`, which gathers the directory
+entries once and dispatches on them with a simple `if / else if / else` chain:
+long listing if `long_flag`, otherwise horizontal printing if `horizontal_flag`,
+otherwise the default down-then-across columns. This keeps the decision in a
+single place (rather than mixing the checks into each print function), means the
+entries are read from the directory exactly once regardless of the mode, and
+allows options to be combined later simply by adding another flag to the chain.
 
 ---
 
