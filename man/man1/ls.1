@@ -1,0 +1,163 @@
+.\" Manual page for the ls re-implementation of BSDSF24A025-OS-A02
+.\" Programming Assignment 02 - Operating Systems
+.TH LS 1 "13 October 2026" "BSDSF24A025-OS-A02" "User Commands"
+.SH NAME
+ls \- list directory contents
+.SH SYNOPSIS
+.B ls
+.RB [ \-lxR ]
+.RI [ directory ...]
+.SH DESCRIPTION
+.B ls
+lists the contents of each
+.I directory
+given on the command line, or of the current directory when no operand is
+supplied.  Entries whose names begin with a dot are treated as hidden and are
+skipped, exactly like the base behaviour of the real
+.BR ls (1).
+.PP
+Every directory is read once with
+.BR opendir (3)
+and
+.BR readdir (3)
+into a dynamically allocated array of
+.B struct file_info
+elements, each holding the entry name together with the metadata returned by
+.BR lstat (2).
+The array is sorted alphabetically with
+.BR qsort (3)
+and rendered by one of the display functions described under
+.BR OPTIONS .
+The metadata of a symbolic link is never followed, so a link is described by
+its own permissions, size and modification time.
+.PP
+When several directories are listed, each one is introduced by a header line.
+.SH OPTIONS
+.TP
+.B \-l
+Produce a long listing, one entry per line, preceded by a
+.B total
+line with the number of blocks used by the directory.  Each line shows, in
+columns that are aligned across the whole listing: the file type and the
+permission string, the number of hard links, the owner name (resolved with
+.BR getpwuid (3)),
+the group name (resolved with
+.BR getgrgid (3)),
+the size in bytes, the modification time (formatted with
+.BR ctime (3))
+and finally the name.  Symbolic links are additionally followed by an arrow
+and the path of their target.  The special permission bits setuid, setgid and
+sticky appear as
+.BR s ", " S ", " t " or " T
+in place of the corresponding execute character.
+.TP
+.B \-x
+Print the entries in horizontal columns: left to right across the screen,
+wrapping to the next line only when the current line is full.  This is the
+.B across
+layout, in contrast to the default
+.B down then across
+layout.
+.TP
+.B \-R
+List recursively.  After a directory has been displayed, the program descends
+into each of its subdirectories and prints a header line naming it, continuing
+until the whole tree has been visited.  The full path of a child is built by
+joining the name to the path of its parent.
+.SH LAYOUT
+Without any display option the entries are printed in columns that are filled
+from top to bottom and then across, like the default output of the real
+.BR ls (1).
+The number of columns is derived from the width of the terminal, which is
+queried with
+.BR ioctl (2)
+using the
+.B TIOCGWINSZ
+request; when the size cannot be detected (for example when the output is
+redirected to a file or a pipe) a width of 80 columns is assumed.  The width of
+a column is the length of the longest name plus two blanks.
+.SH COLORS
+Filenames are printed with an ANSI escape sequence chosen from the file type,
+so that the different kinds of entries can be told apart at a glance:
+.TP
+.B blue
+directories
+.TP
+.B green
+executable files
+.TP
+.B red
+archives (.tar, .gz, .zip)
+.TP
+.B pink
+symbolic links
+.TP
+.B reverse video
+special files (devices, sockets, fifos)
+.PP
+The escape sequences occupy no space on the screen, therefore the padding of
+the columns is always computed from the length of the plain name.
+.SH EXAMPLES
+.TP
+.B ls
+List the current directory in down-then-across columns.
+.TP
+.B ls \-l
+List the current directory in the long format.
+.TP
+.B ls \-x
+List the current directory in horizontal columns.
+.TP
+.B ls \-lR /etc
+Recursively list the whole of
+.I /etc
+with full metadata for every entry.
+.TP
+.B ls src obj
+List two directories, each introduced by its own header line.
+.SH EXIT STATUS
+.TP
+.B 0
+The listing was produced.
+.TP
+.B 1
+An unknown option was given, or the program was invoked incorrectly.
+.PP
+A directory that cannot be opened is reported on the standard error output as
+.B "Cannot open directory"
+followed by its name; the remaining directories are still listed.
+.SH OUTPUT FORMAT
+.nf
+$ ls \-l src
+total 16
+-rw\-r--r--  1 daniyal  daniyal  7289 Oct 13 08:48 ls\-v1.0.0.c
+.fi
+.SH FILES
+.TP
+.I src/ls\-v1.0.0.c
+The single source file, extended by every feature of this assignment.
+.TP
+.I Makefile
+Build script producing
+.IR bin/ls .
+.SH BUGS
+Hidden entries cannot be displayed: there is no
+.B \-a
+option.  Sorting is done with
+.BR strcmp (3),
+so it is case sensitive and locale dependent, and entries whose metadata
+cannot be read with
+.BR lstat (2)
+are still listed but shown with empty metadata.
+.SH SEE ALSO
+.BR opendir (3),
+.BR readdir (3),
+.BR lstat (2),
+.BR stat (2),
+.BR getpwuid (3),
+.BR getgrgid (3),
+.BR ctime (3),
+.BR qsort (3),
+.BR ioctl (2)
+.SH AUTHOR
+Daniyal Usman (BSDSF24A025) \(em Operating Systems, Programming Assignment 02.

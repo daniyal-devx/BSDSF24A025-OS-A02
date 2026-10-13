@@ -9,6 +9,14 @@ make            # builds bin/ls
 make clean      # removes obj/ and bin/ artifacts
 ```
 
+## Manual page
+
+```sh
+man ./man/man1/ls.1          # read the manual page
+groff -man -Tascii man/man1/ls.1 | less   # render it without installing
+sudo make install           # install ls and its man page system wide
+```
+
 ## Usage
 
 ```sh
@@ -37,7 +45,7 @@ BSDSF24A025-OS-A02/
 ├── src/        # C source code (ls-v1.0.0.c, extended each feature)
 ├── bin/        # compiled program
 ├── obj/        # object files
-├── man/        # man page (bonus task)
+├── man/        # manual page (man/man1/ls.1)
 ├── Makefile    # build script
 ├── README.md   # this file
 └── REPORT.md   # analysis report (answers to report questions)
