@@ -22,6 +22,11 @@
 * Version 1.4.0: Alphabetical Sort
 *   Every display mode now renders the entries in alphabetical order,
 *   produced with qsort() and a strcmp()-based comparison function.
+*
+* Version 1.5.0: Colorized Output Based on File Type
+*   Filenames are printed in a colour derived from their metadata:
+*   blue directories, green executables, red archives, pink symlinks
+*   and reverse video for special files.
 */
 #include <stdio.h>
 #include <stdlib.h>
@@ -39,6 +44,14 @@
 
 extern int errno;
 
+/* ANSI escape sequences used for the colourised output. */
+#define ANSI_RESET    "\033[0m"   /* back to the default attributes */
+#define ANSI_BLUE     "\033[0;34m" /* directories                   */
+#define ANSI_GREEN    "\033[0;32m" /* executables                   */
+#define ANSI_RED      "\033[0;31m" /* archives (.tar, .gz, .zip)    */
+#define ANSI_PINK     "\033[1;35m" /* symbolic links                */
+#define ANSI_REVERSE  "\033[0;7m"  /* special files (device, socket) */
+
 /* One directory entry together with the metadata gathered with lstat(). */
 struct file_info {
     char *name;
@@ -46,6 +59,38 @@ struct file_info {
 };
 
 void do_ls(const char *dir, int long_flag, int horizontal_flag);
+
+/* Return the ANSI colour for an entry, according to its type. The
+ * metadata comes from lstat(), so a symbolic link is classified as a
+ * link and is never followed. */
+static const char *colour_for(const char *name, const struct stat *st)
+{
+    if (S_ISDIR(st->st_mode))
+        return ANSI_BLUE;
+    if (S_ISLNK(st->st_mode))
+        return ANSI_PINK;
+    if (S_ISCHR(st->st_mode) || S_ISBLK(st->st_mode) ||
+        S_ISFIFO(st->st_mode) || S_ISSOCK(st->st_mode))
+        return ANSI_REVERSE;
+    if (st->st_mode & (S_IXUSR | S_IXGRP | S_IXOTH))
+        return ANSI_GREEN;
+    if (strstr(name, ".tar") != NULL || strstr(name, ".gz") != NULL ||
+        strstr(name, ".zip") != NULL)
+        return ANSI_RED;
+    return "";
+}
+
+/* Print one filename wrapped in its colour. Entries without a colour
+ * are printed as-is, so plain files stay free of escape sequences. */
+static void print_coloured_name(const struct file_info *file)
+{
+    const char *colour = colour_for(file->name, &file->st);
+
+    if (colour[0] == '\0')
+        fputs(file->name, stdout);
+    else
+        printf("%s%s%s", colour, file->name, ANSI_RESET);
+}
 
 /* Convert the st_mode field into the familiar 10-character permission
  * string (e.g. "drwxr-xr-x"), including the setuid/setgid/sticky bits. */
@@ -213,7 +258,8 @@ static void print_long_listing(struct file_info *files, int count,
                width_group, group_name(st->st_gid, buf2),
                width_size, (long long)st->st_size,
                when != NULL ? when + 4 : "?",   /* skip "Day ", keep 12 chars */
-               files[i].name);
+               "");
+        print_coloured_name(&files[i]);
 
         /* Symbolic links: ls -l also shows the target of the
          * link, obtained with readlink(). */
@@ -274,8 +320,10 @@ static void print_columns(struct file_info *files, int count)
             int idx = col * nrows + row;    /* down then across */
             if (idx >= count)
                 break;
-            printf("%s", files[idx].name);
-            /* Pad every item except the last one of its row. */
+            print_coloured_name(&files[idx]);
+            /* Pad every item except the last one of its row. The padding
+             * is computed from the plain name length, because the colour
+             * escape sequences occupy no space on the screen. */
             if (idx + nrows < count)
                 printf("%*s", colwidth - (int)strlen(files[idx].name), "");
         }
@@ -310,7 +358,7 @@ static void print_horizontal(struct file_info *files, int count)
             pos = 0;
         }
 
-        printf("%s", files[i].name);
+        print_coloured_name(&files[i]);
         pos += namelen;
 
         /* Pad to the column width, but never past the terminal edge. */
