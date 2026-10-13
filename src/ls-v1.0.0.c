@@ -3,9 +3,13 @@
 * This is the source file of version 1.0.0
 * Read the write-up of the assignment to add the features to this base version
 * Usage:
-*       $ lsv1.0.0 
+*       $ lsv1.0.0
 *       % lsv1.0.0  /home
 *       $ lsv1.0.0  /home/kali/   /etc/
+*
+* Version 1.1.0: Complete Long Listing Format (-l)
+*   -l  display a long listing of every entry (permissions, links,
+*       owner, group, size, modification time), resembling "ls -l".
 */
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,51 +17,236 @@
 #include <dirent.h>
 #include <string.h>
 #include <errno.h>
+#include <limits.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+#include <pwd.h>
+#include <grp.h>
+#include <time.h>
 
 extern int errno;
 
-void do_ls(const char *dir);
+/* One directory entry together with the metadata gathered with lstat(). */
+struct file_info {
+    char *name;
+    struct stat st;
+};
 
-int main(int argc, char const *argv[])
+void do_ls(const char *dir, int long_flag);
+
+/* Convert the st_mode field into the familiar 10-character permission
+ * string (e.g. "drwxr-xr-x"), including the setuid/setgid/sticky bits. */
+static void mode_to_string(mode_t mode, char buf[11])
 {
-    if (argc == 1)
-    {
-        do_ls(".");
-    }
+    if (S_ISDIR(mode))
+        buf[0] = 'd';
+    else if (S_ISLNK(mode))
+        buf[0] = 'l';
+    else if (S_ISCHR(mode))
+        buf[0] = 'c';
+    else if (S_ISBLK(mode))
+        buf[0] = 'b';
+    else if (S_ISFIFO(mode))
+        buf[0] = 'p';
+    else if (S_ISSOCK(mode))
+        buf[0] = 's';
     else
-    {
-        for (int i = 1; i < argc; i++)
-        {
-            printf("Directory listing of %s : \n", argv[i]);
-            do_ls(argv[i]);
-	    puts("");
-        }
-    }
-    return 0;
+        buf[0] = '-';
+
+    buf[1] = (mode & S_IRUSR) ? 'r' : '-';
+    buf[2] = (mode & S_IWUSR) ? 'w' : '-';
+    buf[3] = (mode & S_IXUSR) ? 'x' : '-';
+    buf[4] = (mode & S_IRGRP) ? 'r' : '-';
+    buf[5] = (mode & S_IWGRP) ? 'w' : '-';
+    buf[6] = (mode & S_IXGRP) ? 'x' : '-';
+    buf[7] = (mode & S_IROTH) ? 'r' : '-';
+    buf[8] = (mode & S_IWOTH) ? 'w' : '-';
+    buf[9] = (mode & S_IXOTH) ? 'x' : '-';
+    buf[10] = '\0';
+
+    /* The special bits replace the execute character (using the capital
+     * variant when the corresponding execute bit is not set). */
+    if (mode & S_ISUID)
+        buf[3] = (mode & S_IXUSR) ? 's' : 'S';
+    if (mode & S_ISGID)
+        buf[6] = (mode & S_IXGRP) ? 's' : 'S';
+    if (mode & S_ISVTX)
+        buf[9] = (mode & S_IXOTH) ? 't' : 'T';
 }
 
-void do_ls(const char *dir)
+/* Return the user name for uid, or the numeric id as a fallback string. */
+static const char *user_name(uid_t uid, char buf[32])
 {
-    struct dirent *entry;
+    struct passwd *pw = getpwuid(uid);
+    if (pw != NULL)
+        return pw->pw_name;
+    snprintf(buf, 32, "%u", (unsigned int)uid);
+    return buf;
+}
+
+/* Return the group name for gid, or the numeric id as a fallback string. */
+static const char *group_name(gid_t gid, char buf[32])
+{
+    struct group *gr = getgrgid(gid);
+    if (gr != NULL)
+        return gr->gr_name;
+    snprintf(buf, 32, "%u", (unsigned int)gid);
+    return buf;
+}
+
+/* Read every non-hidden entry of dir into a dynamically grown array.
+ * Returns the array (which the caller must free) and stores the number
+ * of entries in *count. Returns NULL if the directory cannot be opened. */
+static struct file_info *read_entries(const char *dir, int *count)
+{
     DIR *dp = opendir(dir);
-    if (dp == NULL)
-    {
+    if (dp == NULL) {
         fprintf(stderr, "Cannot open directory : %s\n", dir);
-        return;
+        return NULL;
     }
+
+    int capacity = 16;
+    int n = 0;
+    struct file_info *files = malloc(capacity * sizeof *files);
+    if (files == NULL) {
+        perror("malloc");
+        closedir(dp);
+        return NULL;
+    }
+
+    struct dirent *entry;
     errno = 0;
-    while ((entry = readdir(dp)) != NULL)
-    {
-        if (entry->d_name[0] == '.')
+    while ((entry = readdir(dp)) != NULL) {
+        if (entry->d_name[0] == '.')   /* skip hidden files */
             continue;
-        printf("%s\n", entry->d_name);
+
+        if (n == capacity) {
+            capacity *= 2;
+            struct file_info *tmp = realloc(files, capacity * sizeof *files);
+            if (tmp == NULL) {
+                perror("realloc");
+                break;
+            }
+            files = tmp;
+        }
+
+        files[n].name = strdup(entry->d_name);
+
+        /* lstat() on the full path: it must work no matter which
+         * directory we are listing, and it must not follow links. */
+        char path[PATH_MAX];
+        snprintf(path, sizeof path, "%s/%s", dir, entry->d_name);
+        if (lstat(path, &files[n].st) != 0)
+            memset(&files[n].st, 0, sizeof files[n].st);
+
+        n++;
     }
 
     if (errno != 0)
-    {
         perror("readdir failed");
-    }
 
     closedir(dp);
+    *count = n;
+    return files;
+}
+
+/* Print the long listing (ls -l) of the gathered entries. */
+static void print_long_listing(struct file_info *files, int count)
+{
+    int width_links = 1, width_owner = 1, width_group = 1, width_size = 1;
+    long total = 0;
+
+    /* First pass: compute the "total" line and the width of every
+     * column so that all lines line up exactly like the real ls -l. */
+    for (int i = 0; i < count; i++) {
+        const struct stat *st = &files[i].st;
+        char buf[32];
+        int len;
+
+        total += st->st_blocks;   /* st_blocks is counted in 512-byte units */
+
+        len = snprintf(NULL, 0, "%lu", (unsigned long)st->st_nlink);
+        if (len > width_links)
+            width_links = len;
+
+        len = (int)strlen(user_name(st->st_uid, buf));
+        if (len > width_owner)
+            width_owner = len;
+
+        len = (int)strlen(group_name(st->st_gid, buf));
+        if (len > width_group)
+            width_group = len;
+
+        len = snprintf(NULL, 0, "%lld", (long long)st->st_size);
+        if (len > width_size)
+            width_size = len;
+    }
+
+    printf("total %ld\n", total / 2);
+
+    /* Second pass: one line per entry. */
+    for (int i = 0; i < count; i++) {
+        const struct stat *st = &files[i].st;
+        char mode[11], buf1[32], buf2[32];
+        char *when = ctime(&st->st_mtime);  /* "Tue Oct 13 08:00:00 2026\n" */
+
+        mode_to_string(st->st_mode, mode);
+
+        printf("%s %*lld %-*s %-*s %*lld %.12s %s\n",
+               mode,
+               width_links, (long long)st->st_nlink,
+               width_owner, user_name(st->st_uid, buf1),
+               width_group, group_name(st->st_gid, buf2),
+               width_size, (long long)st->st_size,
+               when != NULL ? when + 4 : "?",   /* skip "Day ", keep 12 chars */
+               files[i].name);
+    }
+}
+
+void do_ls(const char *dir, int long_flag)
+{
+    int count = 0;
+    struct file_info *files = read_entries(dir, &count);
+    if (files == NULL)
+        return;
+
+    if (long_flag)
+        print_long_listing(files, count);
+    else
+        for (int i = 0; i < count; i++)
+            printf("%s\n", files[i].name);
+
+    for (int i = 0; i < count; i++)
+        free(files[i].name);
+    free(files);
+}
+
+int main(int argc, char *argv[])
+{
+    int long_flag = 0;
+    int opt;
+
+    /* Parse the command-line options with getopt().
+     * (getopt() takes a non-const argv, hence char *argv[] above.) */
+    while ((opt = getopt(argc, argv, "l")) != -1) {
+        switch (opt) {
+        case 'l':
+            long_flag = 1;
+            break;
+        default:
+            fprintf(stderr, "Usage: %s [-l] [directory ...]\n", argv[0]);
+            return 1;
+        }
+    }
+
+    if (optind == argc) {
+        do_ls(".", long_flag);
+    } else {
+        for (int i = optind; i < argc; i++) {
+            printf("Directory listing of %s : \n", argv[i]);
+            do_ls(argv[i], long_flag);
+            puts("");
+        }
+    }
+    return 0;
 }
