@@ -205,13 +205,64 @@ it a compile error if the function tries to modify an element while sorting.
 **Q1. How do ANSI escape codes work to produce color in a standard Linux
 terminal? Show the specific code sequence for printing text in green.**
 
-(answer added in Feature-6)
+A terminal emulator does not interpret colour names — it interprets bytes.
+An ANSI escape code is a short control sequence, starting with the ESC
+character (`\033`, ASCII 27), that the terminal driver consumes and acts on
+instead of displaying. The general form is `ESC [ parameters m`, where the
+final `m` means "manipulate display attributes" and the numeric parameters
+select the attribute:
+
+- `0` — reset all attributes (back to the default foreground);
+- `1` — bold / high intensity;
+- `30`–`37` — the eight standard foreground colours (30 black, 31 red,
+  32 green, 33 yellow, 34 blue, 35 magenta, 36 cyan, 37 white);
+- `40`–`47` — the matching background colours;
+- `7` — reverse video (swap foreground and background).
+
+So printing text in green is the three-part sequence "switch to green → text
+→ switch back":
+
+```c
+printf("\033[0;32m");   /* 0 = reset, 32 = green foreground */
+printf("Hello");
+printf("\033[0m");      /* restore the default colour        */
+```
+
+which is exactly the pattern my `ANSI_GREEN` / `ANSI_RESET` macros and
+`print_coloured_name()` helper implement. The reset is essential: without it
+the colour would "bleed" into every following line. Note that the escape
+sequence itself takes no space on screen, which is why my column padding is
+computed from `strlen(name)` and not from the length of the printed string.
 
 **Q2. To color an executable file, you need to check its permission bits. Explain
 which bits in the st_mode field you need to check to determine if a file is
 executable by the owner, group, or others.**
 
-(answer added in Feature-6)
+`st_mode` stores the three execute bits in its low permission bits, one per
+class of user, and each is tested with a bitwise AND:
+
+- `S_IXUSR` (0100 octal) — the **execute/search bit for the owner**;
+- `S_IXGRP` (0010 octal) — the **execute bit for the group**;
+- `S_IXOTH` (0001 octal) — the **execute bit for others**.
+
+To decide *whether a file is executable at all* — which is the question `ls`
+actually asks when colouring, since it must mark a file green if anybody can
+run it — the three are OR-ed together in a single test:
+
+```c
+if (st->st_mode & (S_IXUSR | S_IXGRP | S_IXOTH))
+        /* executable → green */
+```
+
+Because `&` has to bind all the bits for the expression to be non-zero, this
+one test is true when *any* of the three execute bits is set, i.e. when the
+mode is `rwx`, `r-x`, `--x`, and so on for at least one class. Note that the
+kernel never sets an execute bit without the matching read bit, so this is
+safe. If a program needed to distinguish *who* may execute, it would test the
+bits separately (`st_mode & S_IXUSR`, `st_mode & S_IXGRP`, `st_mode & S_IXOTH`)
+and read each one's truth value individually. The same masking technique is
+reused for the permission string (`S_IRUSR`, `S_IWUSR`, …) and for the
+special bits `S_ISUID`, `S_ISGID` and `S_ISVTX`.
 
 ---
 
