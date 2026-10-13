@@ -18,6 +18,10 @@
 * Version 1.3.0: Horizontal Column Display (-x)
 *   -x  print the entries across the rows (left to right) instead of
 *       down then across; the state is kept in the display-mode flags.
+*
+* Version 1.4.0: Alphabetical Sort
+*   Every display mode now renders the entries in alphabetical order,
+*   produced with qsort() and a strcmp()-based comparison function.
 */
 #include <stdio.h>
 #include <stdlib.h>
@@ -322,12 +326,26 @@ static void print_horizontal(struct file_info *files, int count)
         printf("\n");
 }
 
+/* Comparison function for qsort(): orders two entries by their name.
+ * qsort() knows nothing about our data type, so it hands us two generic
+ * pointers that must be cast back to elements of the array being sorted. */
+static int compare_names(const void *a, const void *b)
+{
+    const struct file_info *fa = (const struct file_info *)a;
+    const struct file_info *fb = (const struct file_info *)b;
+    return strcmp(fa->name, fb->name);
+}
+
 void do_ls(const char *dir, int long_flag, int horizontal_flag)
 {
     int count = 0;
     struct file_info *files = read_entries(dir, &count);
     if (files == NULL)
         return;
+
+    /* Sort once, right after reading and before any display function is
+     * called, so that every display mode renders alphabetical order. */
+    qsort(files, count, sizeof *files, compare_names);
 
     /* Display mode is decided once, from the two option flags. */
     if (long_flag)
