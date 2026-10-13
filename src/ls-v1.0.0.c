@@ -10,6 +10,10 @@
 * Version 1.1.0: Complete Long Listing Format (-l)
 *   -l  display a long listing of every entry (permissions, links,
 *       owner, group, size, modification time), resembling "ls -l".
+*
+* Version 1.2.0: Column Display (down then across)
+*   The default output is now printed in multiple columns, filled
+*   from top to bottom and then across, like the real "ls".
 */
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,6 +22,7 @@
 #include <string.h>
 #include <errno.h>
 #include <limits.h>
+#include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <pwd.h>
@@ -221,6 +226,55 @@ static void print_long_listing(struct file_info *files, int count,
     }
 }
 
+/* Return the width of the terminal connected to stdout, falling
+ * back to 80 columns when the size cannot be detected (for
+ * example when the output is redirected to a file or a pipe). */
+static int terminal_width(void)
+{
+    struct winsize ws;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0)
+        return ws.ws_col;
+    return 80;
+}
+
+/* Print the entries in columns, filling each column from top to
+ * bottom before moving to the next column ("down then across"),
+ * like the default output of the real ls. */
+static void print_columns(struct file_info *files, int count)
+{
+    if (count == 0)
+        return;
+
+    /* The longest name determines the width of every column. */
+    int maxlen = 0;
+    for (int i = 0; i < count; i++) {
+        int len = (int)strlen(files[i].name);
+        if (len > maxlen)
+            maxlen = len;
+    }
+
+    int colwidth = maxlen + 2;          /* two blank columns of padding */
+    int ncols = terminal_width() / colwidth;
+    if (ncols < 1)
+        ncols = 1;
+    if (ncols > count)
+        ncols = count;
+    int nrows = (count + ncols - 1) / ncols;
+
+    for (int row = 0; row < nrows; row++) {
+        for (int col = 0; col < ncols; col++) {
+            int idx = col * nrows + row;    /* down then across */
+            if (idx >= count)
+                break;
+            printf("%s", files[idx].name);
+            /* Pad every item except the last one of its row. */
+            if (idx + nrows < count)
+                printf("%*s", colwidth - (int)strlen(files[idx].name), "");
+        }
+        printf("\n");
+    }
+}
+
 void do_ls(const char *dir, int long_flag)
 {
     int count = 0;
@@ -231,8 +285,7 @@ void do_ls(const char *dir, int long_flag)
     if (long_flag)
         print_long_listing(files, count, dir);
     else
-        for (int i = 0; i < count; i++)
-            printf("%s\n", files[i].name);
+        print_columns(files, count);
 
     for (int i = 0; i < count; i++)
         free(files[i].name);
