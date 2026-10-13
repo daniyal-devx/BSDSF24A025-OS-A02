@@ -14,6 +14,10 @@
 * Version 1.2.0: Column Display (down then across)
 *   The default output is now printed in multiple columns, filled
 *   from top to bottom and then across, like the real "ls".
+*
+* Version 1.3.0: Horizontal Column Display (-x)
+*   -x  print the entries across the rows (left to right) instead of
+*       down then across; the state is kept in the display-mode flags.
 */
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,7 +41,7 @@ struct file_info {
     struct stat st;
 };
 
-void do_ls(const char *dir, int long_flag);
+void do_ls(const char *dir, int long_flag, int horizontal_flag);
 
 /* Convert the st_mode field into the familiar 10-character permission
  * string (e.g. "drwxr-xr-x"), including the setuid/setgid/sticky bits. */
@@ -275,15 +279,61 @@ static void print_columns(struct file_info *files, int count)
     }
 }
 
-void do_ls(const char *dir, int long_flag)
+/* Print the entries in columns, filling each row from left to right
+ * and wrapping only when the line is full ("across"), like "ls -x". */
+static void print_horizontal(struct file_info *files, int count)
+{
+    if (count == 0)
+        return;
+
+    int maxlen = 0;
+    for (int i = 0; i < count; i++) {
+        int len = (int)strlen(files[i].name);
+        if (len > maxlen)
+            maxlen = len;
+    }
+
+    int colwidth = maxlen + 2;      /* two blank columns of padding */
+    int width = terminal_width();
+    int pos = 0;                   /* current horizontal position */
+
+    for (int i = 0; i < count; i++) {
+        int namelen = (int)strlen(files[i].name);
+
+        /* Would the next item not fit on this line? Start a new one. */
+        if (pos > 0 && pos + colwidth > width) {
+            printf("\n");
+            pos = 0;
+        }
+
+        printf("%s", files[i].name);
+        pos += namelen;
+
+        /* Pad to the column width, but never past the terminal edge. */
+        int pad = colwidth - namelen;
+        if (pos + pad > width)
+            pad = width - pos;
+        if (pad > 0)
+            printf("%*s", pad, "");
+        pos += pad;
+    }
+
+    if (pos > 0)
+        printf("\n");
+}
+
+void do_ls(const char *dir, int long_flag, int horizontal_flag)
 {
     int count = 0;
     struct file_info *files = read_entries(dir, &count);
     if (files == NULL)
         return;
 
+    /* Display mode is decided once, from the two option flags. */
     if (long_flag)
         print_long_listing(files, count, dir);
+    else if (horizontal_flag)
+        print_horizontal(files, count);
     else
         print_columns(files, count);
 
@@ -295,27 +345,31 @@ void do_ls(const char *dir, int long_flag)
 int main(int argc, char *argv[])
 {
     int long_flag = 0;
+    int horizontal_flag = 0;
     int opt;
 
     /* Parse the command-line options with getopt().
      * (getopt() takes a non-const argv, hence char *argv[] above.) */
-    while ((opt = getopt(argc, argv, "l")) != -1) {
+    while ((opt = getopt(argc, argv, "lx")) != -1) {
         switch (opt) {
         case 'l':
             long_flag = 1;
             break;
+        case 'x':
+            horizontal_flag = 1;
+            break;
         default:
-            fprintf(stderr, "Usage: %s [-l] [directory ...]\n", argv[0]);
+            fprintf(stderr, "Usage: %s [-lx] [directory ...]\n", argv[0]);
             return 1;
         }
     }
 
     if (optind == argc) {
-        do_ls(".", long_flag);
+        do_ls(".", long_flag, horizontal_flag);
     } else {
         for (int i = optind; i < argc; i++) {
             printf("Directory listing of %s : \n", argv[i]);
-            do_ls(argv[i], long_flag);
+            do_ls(argv[i], long_flag, horizontal_flag);
             puts("");
         }
     }
