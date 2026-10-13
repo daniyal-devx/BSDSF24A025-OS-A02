@@ -60,13 +60,40 @@ so bitwise operations are used to extract each piece:
 columnar format. Why is a simple single loop through the list of filenames
 insufficient for this task?**
 
-(answer added in Feature-3)
+The entries are first arranged in a conceptual grid of `ncols` columns
+and `nrows` rows that is filled **column by column**: the first `nrows`
+filenames go into column 0 (top to bottom), the next `nrows` into
+column 1, and so on. Printing therefore iterates **row by row**: for
+row `r` the program prints the items stored at indices `r`,
+`r + nrows`, `r + 2*nrows`, ... i.e. the `r`-th item of every column,
+padding each item to the common column width so the columns line up.
 
-**Q2. What is the purpose of the ioctl system call in this context? What would
-be the limitations of your program if you only used a fixed-width fallback
-(e.g., 80 columns) instead of detecting the terminal size?**
+A single loop through the array is insufficient for two reasons:
+(1) the array is in column-major order, so printing it straight through
+would fill the first row completely before starting the second — that is
+"across then down", the layout of `ls -x`, not of `ls`; and
+(2) the layout parameters (longest filename, column width, number of
+columns and rows) must all be known *before* the first line is
+printed, so at least one gathering pass and the row/column index
+arithmetic are unavoidable.
 
-(answer added in Feature-3)
+**Q2. What is the purpose of the ioctl system call in this context? What
+would be the limitations of your program if you only used a fixed-width
+fallback (e.g., 80 columns) instead of detecting the terminal size?**
+
+`ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws)` asks the terminal driver for
+the size of the window (rows and columns) attached to stdout. It lets
+the program compute how many filename columns actually fit on screen,
+so the layout adapts when the terminal is resized.
+
+If only a fixed 80-column fallback were used, the output would be
+wrong in both directions: on a narrower terminal the lines would
+overflow the screen and the columns would be misaligned by the
+terminal's own wrapping, while on a wider terminal space would be
+wasted and fewer entries would be shown per line. The fallback is
+still necessary for the case where stdout is not a terminal at all
+(redirected to a file or a pipe), because `ioctl` fails there and no
+size can be detected.
 
 ---
 
