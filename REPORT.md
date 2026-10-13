@@ -141,12 +141,62 @@ allows options to be combined later simply by adding another flag to the chain.
 can sort them? What are the potential drawbacks of this approach for directories
 containing millions of files?**
 
-(answer added in Feature-5)
+Sorting is a rearrangement of an entire collection: `qsort()` permutes the
+array as a whole, and the columnar display needs the total number of entries
+plus the longest name *before* printing anything. Since `readdir()` only
+produces one entry per call, in whatever order the file system returns them,
+the entries have to be accumulated in a dynamic array first; only then can the
+collection be sorted as a unit and afterwards traversed in the sorted order.
+
+The drawbacks of this "load everything into memory" approach are:
+- **Memory pressure**: a directory with millions of files needs
+  `count * sizeof(struct file_info)` plus one `strdup()` allocation per name,
+  which can reach hundreds of megabytes and may trigger swapping or an
+  allocation failure. This is why real `ls` does not do it this way.
+- **Latency and useless work**: nothing can be printed until the *entire*
+  directory has been read and sorted, so the user waits much longer, and the
+  program does the allocation and sort work even when the output is piped to
+  `head`.
+- **Scaling and errors**: the reallocation and sorting costs grow linearly and
+  n·log n respectively, and each `strdup()` is another allocation that can
+  fail in the middle of a huge directory.
+- **External sort**: the usual alternative for very large directories is a
+  multi-pass external merge sort (sort chunks to temporary files, then merge),
+  trading memory for extra I/O.
 
 **Q2. Explain the purpose and signature of the comparison function required by
 qsort(). How does it work, and why must it take const void * arguments?**
 
-(answer added in Feature-5)
+The comparison function tells `qsort()` how to order two elements of *our*
+array. Its signature must be exactly:
+
+```c
+int compare(const void *a, const void *b);
+```
+
+`qsort()` has no type information — it only knows it is sorting an array of
+`nmemb` elements of `size` bytes — so it passes each element as a generic
+`void *` pointing directly at that element of the array. The comparison
+function therefore casts the two pointers back to pointers to the array's
+element type (`const struct file_info *`) and compares whatever member carries
+the ordering. In my code it is:
+
+```c
+static int compare_names(const void *a, const void *b)
+{
+    const struct file_info *fa = (const struct file_info *)a;
+    const struct file_info *fb = (const struct file_info *)b;
+    return strcmp(fa->name, fb->name);
+}
+```
+
+It returns a negative value when `a` must come first, zero when the two are
+equal, and a positive value when `b` must come first; here that ordering is
+produced by `strcmp()`, which is why the comparison is alphabetical (and
+case-sensitive, exactly like the real `ls` in the C locale). The arguments are
+`const void *` because the comparator must only *read* the elements: `qsort()`
+is allowed to pass pointers to `const` data, and declaring them `const` makes
+it a compile error if the function tries to modify an element while sorting.
 
 ---
 
