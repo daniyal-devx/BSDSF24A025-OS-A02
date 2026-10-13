@@ -14,13 +14,43 @@ from Feature-2 (v1.1.0) to Feature-7 (v1.6.0).
 **Q1. What is the crucial difference between the stat() and lstat() system calls?
 In the context of the ls command, when is it more appropriate to use lstat()?**
 
-(answer added in Feature-2)
+The crucial difference is in how the two calls treat symbolic links. `stat()`
+follows a symbolic link and returns the metadata of the file the link points
+to, whereas `lstat()` does not follow the link and returns the metadata of the
+link itself.
+
+In the context of `ls`, `lstat()` is the appropriate call (and is what the
+real `ls` uses by default). `ls` must describe the directory entry itself:
+a symbolic link must be shown with the type character `l` and with a size
+equal to the length of its target path, not the size of the target file. If
+`ls` used `stat()`, every symlink would be indistinguishable from its target,
+and a dangling link (whose target does not exist) would make `stat()` fail
+with `ENOENT`, so the entry could not be listed at all. `stat()` is only the
+right choice when the caller explicitly wants to resolve the link, such as
+when the `-L` option is given to `ls`.
 
 **Q2. The st_mode field in struct stat is an integer that contains both the file
 type and the permission bits. Explain how you can use bitwise operators (like &)
 and predefined macros (like S_IFDIR or S_IRUSR) to extract this information.**
 
-(answer added in Feature-2)
+`st_mode` packs the file type and the permission/special bits into one integer,
+so bitwise operations are used to extract each piece:
+
+- **File type**: the type bits are masked out with the bit mask `S_IFMT`
+  (`st_mode & S_IFMT`) and the result is compared with the type constants
+  `S_IFDIR`, `S_IFREG`, `S_IFLNK`, `S_IFCHR`, `S_IFBLK`, `S_IFIFO`,
+  `S_IFSOCK`. In practice one uses the convenience macros `S_ISDIR(st_mode)`,
+  `S_ISREG(st_mode)`, `S_ISLNK(st_mode)`, etc., which perform exactly that
+  mask-and-compare internally. In my code `mode_to_string()` uses these macros
+  to choose the first character of the permission string (`d`, `-`, `l`, ...).
+- **Permission bits**: each bit is tested individually with the bitwise AND
+  operator, e.g. `(st_mode & S_IRUSR)` is non-zero when the owner-read bit is
+  set. The same pattern applies to `S_IWUSR`/`S_IXUSR` (owner),
+  `S_IRGRP`/`S_IWGRP`/`S_IXGRP` (group) and `S_IROTH`/`S_IWOTH`/`S_IXOTH`
+  (others). My code uses these tests to build the `rwx` triplets.
+- **Special bits**: `S_ISUID`, `S_ISGID` and `S_ISVTX` are tested the same
+  way; when set they replace the corresponding execute character with
+  `s`/`S` (setuid/setgid) or `t`/`T` (sticky), again using `&`.
 
 ---
 

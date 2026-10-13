@@ -4,7 +4,7 @@
 # and the final executable is linked into bin/ (named `ls`).
 
 CC      := gcc
-CFLAGS  := -Wall -Wextra -std=c11
+CFLAGS  := -Wall -Wextra -std=gnu11
 
 SRC_DIR := src
 OBJ_DIR := obj
