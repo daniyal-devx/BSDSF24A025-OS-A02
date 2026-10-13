@@ -272,10 +272,57 @@ special bits `S_ISUID`, `S_ISGID` and `S_ISVTX`.
 recursive ls, what is the base case that stops the recursion from continuing
 forever?**
 
-(answer added in Feature-7)
+A **base case** is the condition in a recursive function under which it stops
+calling itself and simply returns its result — the terminating branch of the
+recursion. Every recursive function needs at least one, otherwise the calls
+repeat forever and the program ends in a stack overflow (infinite recursion).
+
+In my recursive `ls`, the base case is **a directory that contains no
+subdirectory to descend into** (only regular files, or nothing at all). Such a
+directory is read, sorted, printed, and then the recursion loop finds no
+entry satisfying `S_ISDIR(...)`, so it makes no further recursive call and
+returns to its caller. This "leaf directory" case is what terminates every
+chain of calls.
+
+Equally important is that the recursion can never revisit a directory it has
+already listed, and `read_entries()` guarantees this by skipping every entry
+whose name begins with a dot — which excludes the two self-referencing
+directories `.` (this directory) and `..` (its parent). Without that filter,
+`do_ls(".")` would call `do_ls("./.")`, then `do_ls("././.")`, and so on
+without end. Combined with the base case above, every branch of the recursion
+is finite, and the total number of calls is exactly the number of directories
+in the tree.
 
 **Q2. Explain why it is essential to construct a full path (e.g.,
 "parent_dir/subdir") before making a recursive call. What would happen if you
 simply called do_ls("subdir") from within the do_ls("parent_dir") function call?**
 
-(answer added in Feature-7)
+The `dir` argument is the *complete filesystem path* that the function will
+hand to `opendir()`. A directory entry read from the parent gives only a bare
+name (what `readdir()` returns — never a path), so before recursing the program
+must join that name with the path it is currently listing
+(`snprintf(path, ..., "%s/%s", dir, files[i].name)`). The child call then
+receives `"./src"`, which `opendir()` resolves relative to the process's
+current working directory — and that is correct only because the current
+working directory never changes.
+
+If `do_ls("subdir")` were called instead, the name would be resolved relative
+to the current working directory, which is the directory the *user* launched
+the program in, not the parent directory being listed. The consequences are:
+
+- **Listing the wrong directory (or nothing):** while listing `/home/user/docs`,
+  a call with `"sub"` would open `./sub` relative to the *original* working
+  directory. The recursion would either descend into an entirely unrelated
+  directory, or fail with "Cannot open directory" if no such directory exists
+  there — so nested trees would simply be missing from the output.
+- **Wrong metadata:** the `lstat()` calls build `"%s/%s"` paths too, so every
+  size, permission and link count shown for the subdirectory entries would
+  belong to the wrong file — or be missing entirely.
+- **Broken recursion:** once inside the wrong directory, every further level
+  would be resolved from the same wrong base, so the traversal loses its
+  meaning completely and cannot reach the intended tree.
+
+Building the full path at every level is therefore what makes the descent
+correct and keeps each recursive call self-contained: `do_ls()` only ever needs
+one argument — an absolute or working-directory-relative *path* — to describe
+exactly which directory it must list.
