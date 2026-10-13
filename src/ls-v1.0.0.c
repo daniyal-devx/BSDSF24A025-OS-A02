@@ -151,7 +151,8 @@ static struct file_info *read_entries(const char *dir, int *count)
 }
 
 /* Print the long listing (ls -l) of the gathered entries. */
-static void print_long_listing(struct file_info *files, int count)
+static void print_long_listing(struct file_info *files, int count,
+                               const char *dir)
 {
     int width_links = 1, width_owner = 1, width_group = 1, width_size = 1;
     long total = 0;
@@ -192,7 +193,7 @@ static void print_long_listing(struct file_info *files, int count)
 
         mode_to_string(st->st_mode, mode);
 
-        printf("%s %*lld %-*s %-*s %*lld %.12s %s\n",
+        printf("%s %*lld %-*s %-*s %*lld %.12s %s",
                mode,
                width_links, (long long)st->st_nlink,
                width_owner, user_name(st->st_uid, buf1),
@@ -200,6 +201,23 @@ static void print_long_listing(struct file_info *files, int count)
                width_size, (long long)st->st_size,
                when != NULL ? when + 4 : "?",   /* skip "Day ", keep 12 chars */
                files[i].name);
+
+        /* Symbolic links: ls -l also shows the target of the
+         * link, obtained with readlink(). */
+        if (S_ISLNK(st->st_mode)) {
+            char path[PATH_MAX];
+            char target[PATH_MAX];
+            ssize_t len;
+
+            snprintf(path, sizeof path, "%s/%s", dir, files[i].name);
+            len = readlink(path, target, sizeof target - 1);
+            if (len != -1) {
+                target[len] = '\0';
+                printf(" -> %s", target);
+            }
+        }
+
+        putchar('\n');
     }
 }
 
@@ -211,7 +229,7 @@ void do_ls(const char *dir, int long_flag)
         return;
 
     if (long_flag)
-        print_long_listing(files, count);
+        print_long_listing(files, count, dir);
     else
         for (int i = 0; i < count; i++)
             printf("%s\n", files[i].name);
