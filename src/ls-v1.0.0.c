@@ -27,6 +27,11 @@
 *   Filenames are printed in a colour derived from their metadata:
 *   blue directories, green executables, red archives, pink symlinks
 *   and reverse video for special files.
+*
+* Version 1.6.0: Recursive Listing (-R)
+*   -R  list every directory, then descend into each subdirectory,
+*       building the full path of every child, until the whole tree
+*       has been visited.
 */
 #include <stdio.h>
 #include <stdlib.h>
@@ -58,7 +63,8 @@ struct file_info {
     struct stat st;
 };
 
-void do_ls(const char *dir, int long_flag, int horizontal_flag);
+void do_ls(const char *dir, int long_flag, int horizontal_flag,
+           int recursive_flag);
 
 /* Return the ANSI colour for an entry, according to its type. The
  * metadata comes from lstat(), so a symbolic link is classified as a
@@ -384,8 +390,14 @@ static int compare_names(const void *a, const void *b)
     return strcmp(fa->name, fb->name);
 }
 
-void do_ls(const char *dir, int long_flag, int horizontal_flag)
+void do_ls(const char *dir, int long_flag, int horizontal_flag,
+           int recursive_flag)
 {
+    /* Standard ls -R behaviour: every directory is introduced by a
+     * header line naming it. */
+    if (recursive_flag)
+        printf("%s:\n", dir);
+
     int count = 0;
     struct file_info *files = read_entries(dir, &count);
     if (files == NULL)
@@ -403,6 +415,25 @@ void do_ls(const char *dir, int long_flag, int horizontal_flag)
     else
         print_columns(files, count);
 
+    /* Depth-first recursion into the subdirectories. The metadata was
+     * collected with lstat(), so S_ISDIR() identifies the real
+     * directories; "." and ".." never reach this point because
+     * read_entries() already skipped every hidden entry. */
+    if (recursive_flag) {
+        for (int i = 0; i < count; i++) {
+            if (!S_ISDIR(files[i].st.st_mode))
+                continue;
+
+            /* Build the full path of the child: the next call must
+             * know where it is, not just what it is called. */
+            char path[PATH_MAX];
+            snprintf(path, sizeof path, "%s/%s", dir, files[i].name);
+
+            puts("");
+            do_ls(path, long_flag, horizontal_flag, recursive_flag);
+        }
+    }
+
     for (int i = 0; i < count; i++)
         free(files[i].name);
     free(files);
@@ -412,11 +443,12 @@ int main(int argc, char *argv[])
 {
     int long_flag = 0;
     int horizontal_flag = 0;
+    int recursive_flag = 0;
     int opt;
 
     /* Parse the command-line options with getopt().
      * (getopt() takes a non-const argv, hence char *argv[] above.) */
-    while ((opt = getopt(argc, argv, "lx")) != -1) {
+    while ((opt = getopt(argc, argv, "lxR")) != -1) {
         switch (opt) {
         case 'l':
             long_flag = 1;
@@ -424,18 +456,21 @@ int main(int argc, char *argv[])
         case 'x':
             horizontal_flag = 1;
             break;
+        case 'R':
+            recursive_flag = 1;
+            break;
         default:
-            fprintf(stderr, "Usage: %s [-lx] [directory ...]\n", argv[0]);
+            fprintf(stderr, "Usage: %s [-lxR] [directory ...]\n", argv[0]);
             return 1;
         }
     }
 
     if (optind == argc) {
-        do_ls(".", long_flag, horizontal_flag);
+        do_ls(".", long_flag, horizontal_flag, recursive_flag);
     } else {
         for (int i = optind; i < argc; i++) {
             printf("Directory listing of %s : \n", argv[i]);
-            do_ls(argv[i], long_flag, horizontal_flag);
+            do_ls(argv[i], long_flag, horizontal_flag, recursive_flag);
             puts("");
         }
     }
