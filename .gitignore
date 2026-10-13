@@ -1,0 +1,7 @@
+# Build artifacts
+bin/ls
+obj/*.o
+
+# Editor / OS cruft
+*.swp
+.DS_Store
